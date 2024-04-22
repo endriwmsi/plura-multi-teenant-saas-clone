@@ -27,7 +27,7 @@ const Page = async ({ searchParams }: {
 
         if (!stateAgencyId) return <div>Not authorized</div>
         return redirect(`/agency/${stateAgencyId}/${statePath}?code=${searchParams.code}`);
-      } else return redirect(`/agencu/${agencyId}`);
+      } else return redirect(`/agency/${agencyId}`);
     } else {
       return <div>Not authorized</div>
     }
@@ -40,9 +40,7 @@ const Page = async ({ searchParams }: {
         <h1 className='text-4xl'>Create an Agency</h1>
         <AgencyDetails
           data={{ companyEmail: authUser?.emailAddresses[ 0 ].emailAddress }}
-        >
-
-        </AgencyDetails>
+        />
       </div>
     </div>
   )
