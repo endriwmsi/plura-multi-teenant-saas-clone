@@ -3,12 +3,13 @@
 import { clerkClient, currentUser } from "@clerk/nextjs"
 import { db } from "./db";
 import { redirect } from "next/navigation";
-import { Agency, Plan, User } from "prisma/prisma-client";
+import { Agency, Plan, SubAccount, User } from "prisma/prisma-client";
+import { v4 } from "uuid";
 
 export const getAuthUserDetails = async () => {
-  const user = await currentUser()
+  const user = await currentUser();
   if (!user) {
-    return
+    return;
   }
 
   const userData = await db.user.findUnique({
@@ -28,22 +29,22 @@ export const getAuthUserDetails = async () => {
       },
       Permissions: true,
     },
-  })
+  });
 
-  return userData
-}
+  return userData;
+};
 
 export const saveActivityLogsNotification = async ({
   agencyId,
   description,
   subaccountId,
 }: {
-  agencyId?: string
-  description: string
-  subaccountId?: string
+  agencyId?: string;
+  description: string;
+  subaccountId?: string;
 }) => {
-  const authUser = await currentUser()
-  let userData
+  const authUser = await currentUser();
+  let userData;
   if (!authUser) {
     const response = await db.user.findFirst({
       where: {
@@ -53,32 +54,32 @@ export const saveActivityLogsNotification = async ({
           },
         },
       },
-    })
+    });
     if (response) {
-      userData = response
+      userData = response;
     }
   } else {
     userData = await db.user.findUnique({
       where: { email: authUser?.emailAddresses[0].emailAddress },
-    })
+    });
   }
 
   if (!userData) {
-    console.log('Could not find a user')
-    return
+    console.log("Could not find a user");
+    return;
   }
 
-  let foundAgencyId = agencyId
+  let foundAgencyId = agencyId;
   if (!foundAgencyId) {
     if (!subaccountId) {
       throw new Error(
-        'You need to provide atleast an agency Id or subaccount Id'
-      )
+        "You need to provide atleast an agency Id or subaccount Id"
+      );
     }
     const response = await db.subAccount.findUnique({
       where: { id: subaccountId },
-    })
-    if (response) foundAgencyId = response.agencyId
+    });
+    if (response) foundAgencyId = response.agencyId;
   }
   if (subaccountId) {
     await db.notification.create({
@@ -98,7 +99,7 @@ export const saveActivityLogsNotification = async ({
           connect: { id: subaccountId },
         },
       },
-    })
+    });
   } else {
     await db.notification.create({
       data: {
@@ -114,25 +115,25 @@ export const saveActivityLogsNotification = async ({
           },
         },
       },
-    })
+    });
   }
-}
+};
 
 export const createTeamUser = async (agencyId: string, user: User) => {
-  if (user.role === 'AGENCY_OWNER') return null
-  const response = await db.user.create({ data: { ...user } })
-  return response
-}
+  if (user.role === "AGENCY_OWNER") return null;
+  const response = await db.user.create({ data: { ...user } });
+  return response;
+};
 
 export const verifyAndAcceptInvitation = async () => {
-  const user = await currentUser()
-  if (!user) return redirect('/sign-in')
+  const user = await currentUser();
+  if (!user) return redirect("/sign-in");
   const invitationExists = await db.invitation.findUnique({
     where: {
       email: user.emailAddresses[0].emailAddress,
-      status: 'PENDING',
+      status: "PENDING",
     },
-  })
+  });
 
   if (invitationExists) {
     const userDetails = await createTeamUser(invitationExists.agencyId, {
@@ -144,44 +145,47 @@ export const verifyAndAcceptInvitation = async () => {
       role: invitationExists.role,
       createdAt: new Date(),
       updatedAt: new Date(),
-    })
+    });
     await saveActivityLogsNotification({
       agencyId: invitationExists?.agencyId,
       description: `Joined`,
       subaccountId: undefined,
-    })
+    });
 
     if (userDetails) {
       await clerkClient.users.updateUserMetadata(user.id, {
         privateMetadata: {
-          role: userDetails.role || 'SUBACCOUNT_USER',
+          role: userDetails.role || "SUBACCOUNT_USER",
         },
-      })
+      });
 
       await db.invitation.delete({
         where: { email: userDetails.email },
-      })
+      });
 
-      return userDetails.agencyId
-    } else return null
+      return userDetails.agencyId;
+    } else return null;
   } else {
     const agency = await db.user.findUnique({
       where: {
         email: user.emailAddresses[0].emailAddress,
       },
-    })
-    return agency ? agency.agencyId : null
+    });
+    return agency ? agency.agencyId : null;
   }
-}
+};
 
-export const updateAgencyDetails = async (agencyId: string, agencyDetails: Partial<Agency>) => {
+export const updateAgencyDetails = async (
+  agencyId: string,
+  agencyDetails: Partial<Agency>
+) => {
   const response = await db.agency.update({
     where: { id: agencyId },
     data: { ...agencyDetails },
   });
 
   return response;
-} 
+};
 
 export const deleteAgency = async (agencyId: string) => {
   const response = await db.agency.delete({
@@ -271,8 +275,8 @@ export const upsertAgency = async (agency: Agency, price?: Plan) => {
 
     return agencyDetails;
   } catch (error) {
-    console.log(error)
-  } 
+    console.log(error);
+  }
 }
 
 export const getNotifcationAndUser = async (agencyId: string) => {
@@ -290,3 +294,87 @@ export const getNotifcationAndUser = async (agencyId: string) => {
     console.log(error)
   }
 }
+
+export const upsertSubAccount = async (subAccount: SubAccount) => {
+  if (!subAccount.companyEmail) return null;
+
+  const agencyOwner = await db.user.findFirst({
+    where: {
+      Agency: {
+        id: subAccount.agencyId,
+      },
+      role: "AGENCY_OWNER",
+    },
+  });
+
+  if (!agencyOwner) return console.log("Error! Could not create subaccount");
+  const permissionId = v4();
+  const response = await db.subAccount.upsert({
+    where: {
+      id: subAccount.id,
+    },
+    update: subAccount,
+    create: {
+      ...subAccount,
+      Permissions: {
+        create: {
+          access: true,
+          email: agencyOwner.email,
+          id: permissionId,
+        },
+        connect: {
+          subAccountId: subAccount.id,
+          id: permissionId,
+        },
+      },
+      Pipeline: {
+        create: { name: "Lead cycle" },
+      },
+      SidebarOption: {
+        create: [
+          {
+            name: "Launchpad",
+            icon: "clipboardIcon",
+            link: `/subaccount/${subAccount.id}/launchpad`,
+          },
+          {
+            name: "Settings",
+            icon: "settings",
+            link: `/subaccount/${subAccount.id}/settings`,
+          },
+          {
+            name: "Funnels",
+            icon: "pipelines",
+            link: `/subaccount/${subAccount.id}/funnels`,
+          },
+          {
+            name: "Media",
+            icon: "database",
+            link: `/subaccount/${subAccount.id}/media`,
+          },
+          {
+            name: "Automations",
+            icon: "chip",
+            link: `/subaccount/${subAccount.id}/automations`,
+          },
+          {
+            name: "Pipelines",
+            icon: "flag",
+            link: `/subaccount/${subAccount.id}/pipelines`,
+          },
+          {
+            name: "Contacts",
+            icon: "person",
+            link: `/subaccount/${subAccount.id}/contacts`,
+          },
+          {
+            name: "Dashboard",
+            icon: "category",
+            link: `/subaccount/${subAccount.id}`,
+          },
+        ],
+      },
+    },
+  });
+  return response;
+};
